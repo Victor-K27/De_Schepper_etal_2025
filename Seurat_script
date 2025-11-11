@@ -131,3 +131,398 @@ Iba1.macs.conserved <- FindMarkers(seurat, ident.1 = "Iba1+ Macs") %>% rownames_
 CD163.macs.GO <- clusterProfiler::enrichGO(gene = CD163.macs.conserved[CD163.macs.conserved$avg_log2FC > 1 & CD163.macs.conserved$p_val_adj < 0.05,]$genes, OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "BP") %>% as.data.frame()
 Ccr2.macs.GO <- clusterProfiler::enrichGO(gene = Ccr2.macs.conserved[Ccr2.macs.conserved$avg_log2FC > 1 & Ccr2.macs.conserved$p_val_adj < 0.05,]$genes, OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "BP") %>% as.data.frame()
 Iba1.macs.GO <- clusterProfiler::enrichGO(gene = Iba1.macs.conserved[Iba1.macs.conserved$avg_log2FC > 1 & Iba1.macs.conserved$p_val_adj < 0.05,]$genes, OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "BP") %>% as.data.frame()
+
+
+                                                              #-------# STANDARD PIPELINE #-------#
+
+
+# loading dependencies
+library(tidyverse) 
+library(Seurat)
+library(SeuratObject)
+library(readxl)
+library(ggplot2)
+library(ggrepel)
+library(ggpp)
+library(EnhancedVolcano)
+library(clusterProfiler)
+
+# setting wd
+setwd(dir = "")
+
+# SAMPLES 1,2,7,8 -- gut 3KL
+for (i in 1:1){
+  # creating Mtx object -- sample 1
+  sample_1 <- ReadMtx(mtx = "./Sample1_GutWT/matrix.mtx.gz",
+                      features = "./Sample1_GutWT/features.tsv.gz",
+                      cells = "./Sample1_GutWT/barcodes.tsv.gz")
+  seurat_object_sample_1 <- CreateSeuratObject(sample_1, project = "WT_1")
+  
+  
+  # creating Mtx object -- sample 2
+  sample_2 <- ReadMtx(mtx = "./Sample2_Gut3KL/matrix.mtx.gz",
+                      features = "./Sample2_Gut3KL/features.tsv.gz",
+                      cells = "./Sample2_Gut3KL/barcodes.tsv.gz")
+  seurat_object_sample_2 <- CreateSeuratObject(sample_2, project = "3KL_1")
+  
+  
+  # creating Mtx object -- sample 7
+  sample_7 <- ReadMtx(mtx = "./Sample7_GutWT/matrix.mtx.gz",
+                      features = "./Sample7_GutWT/features.tsv.gz",
+                      cells = "./Sample7_GutWT/barcodes.tsv.gz")
+  seurat_object_sample_7 <- CreateSeuratObject(sample_7, project = "WT_2")
+  
+  
+  # creating Mtx object -- sample 8
+  sample_8 <- ReadMtx(mtx = "./Sample8_Gut3KL/matrix.mtx.gz",
+                      features = "./Sample8_Gut3KL/features.tsv.gz",
+                      cells = "./Sample8_Gut3KL/barcodes.tsv.gz")
+  seurat_object_sample_8 <- CreateSeuratObject(sample_8, project = "3KL_2")
+  
+}
+rm(i)
+
+# parsing condition identiy to the seurat_objects
+seurat_object_sample_1@meta.data$condition <- "WT"
+seurat_object_sample_7@meta.data$condition <- "WT"
+seurat_object_sample_2@meta.data$condition <- "3KL"
+seurat_object_sample_8@meta.data$condition <- "3KL"
+
+# running SCTtransform
+seurat_object_sample_1 <- SCTransform(seurat_object_sample_1, verbose = FALSE) %>% RunPCA()
+seurat_object_sample_2 <- SCTransform(seurat_object_sample_2, verbose = FALSE) %>% RunPCA()
+seurat_object_sample_7 <- SCTransform(seurat_object_sample_7, verbose = FALSE) %>% RunPCA()
+seurat_object_sample_8 <- SCTransform(seurat_object_sample_8, verbose = FALSE) %>% RunPCA()
+
+seurat.list <- list(seurat_object_sample_1, seurat_object_sample_2, seurat_object_sample_7, seurat_object_sample_8)
+features <- SelectIntegrationFeatures(object.list = seurat.list, nfeatures = 3000)
+# starting integration
+seurat.list <- PrepSCTIntegration(object.list = seurat.list, anchor.features = features)
+
+immune.anchors <- FindIntegrationAnchors(object.list = seurat.list, normalization.method = "SCT", anchor.features = features)
+immune.combined.sct <- IntegrateData(anchorset = immune.anchors, normalization.method = "SCT")
+
+seurat <- immune.combined.sct
+
+                                                              #-------# STANDARD PIPELINE #-------#
+
+seurat <- immune.combined.sct
+# running PCA
+DefaultAssay(seurat) <- "integrated"
+seurat <- RunPCA(seurat)
+DimPlot(seurat, reduction = "pca")
+DimHeatmap(seurat, balanced = TRUE, dims = c(1:20))
+# elbow plot - select dimensions
+ElbowPlot(seurat)
+
+seurat <- FindNeighbors(seurat, dims = 1:7)
+seurat <- FindClusters(seurat, resolution = 0.2)
+seurat <- RunUMAP(seurat, dims = 1:7)
+
+# UMAP plot
+DimPlot(seurat, reduction = "umap", label = TRUE)
+
+# Feature plots
+FeaturePlot(seurat, features = c("Csf1r", "Aif1", "H2-Eb1"), ncol = 3)
+FeaturePlot(seurat, features = c("Cd3e", "Cd4", "Cd8a"), ncol = 3)
+FeaturePlot(seurat, features = c("Aif1", "H2-Eb1", "Cd163", "Lyve1", "Ccr2"))
+VlnPlot(seurat, features = c("Csf1r", "Aif1", "Cd163", "Ccr2"), idents = c("CD163+ Macs", "Ccr2+ Macs", "Iba1+ Macs"), assay = "SCT", ncol = 4)
+VlnPlot(seurat, features = c("Cd3e", "Cd8a", "Cd4"), idents = c("CD8+ T-cells", "CD4+CD8+ T-cells", "CD4+ T-cells"), assay = "SCT", ncol = 3)
+
+# removing contamination
+seurat <- subset(seurat, idents = c("0", "1", "2", "3", "4", "6"))
+
+# renaming idents in seurat
+seurat.new.idents <- c("CD8+ T-cells", "CD163+ Macs", "CD4+CD8+ T-cells", "CD4+ T-cells", "Ccr2+ Macs", "Iba1+ Macs")
+names(seurat.new.idents) <- levels(seurat)
+seurat <- RenameIdents(seurat, seurat.new.idents)
+Idents(seurat) <- factor(x = Idents(seurat), levels = c("CD163+ Macs", "Ccr2+ Macs", "Iba1+ Macs", "CD8+ T-cells", "CD4+CD8+ T-cells", "CD4+ T-cells"))
+my_cols <- c("goldenrod2", "hotpink2", "mediumpurple3", "lightcyan4", "deepskyblue3", "steelblue4")
+DimPlot(seurat, reduction = "umap", cols = my_cols, pt.size = 0.8, label = FALSE) + labs(x = "UMAP 1", y = "UMAP 2") +
+  ggtitle(label = "Unsupervised clustering") + theme(axis.title = element_text(face = "bold"), title = element_text(face = "bold"))
+
+# violin plot for macs vs t-cells
+VlnPlot(seurat, features = c("Csf1r", "Fcgr3", "H2-Eb1", "Aif1", "Cd163", "Ccr2", "Cd3e", "Cd8a", "Cd4"), cols = my_cols, ncol = 3)
+# just to show tgf receptor expression
+VlnPlot(seurat, features = c("Tgfbr1", "Tgfbr2"), idents = c("CD8+ T-cells", "CD4+CD8+ T-cells", "CD4+ T-cells"), cols = c("lightcyan4", "deepskyblue3", "steelblue4"))
+
+# dotplot for markers
+genes_to_plot <- c("Lyve1", "Folr2", "Vcam1", "F13a1",  "Selenop", "Pf4", "Mrc1", "Cd163", "Ctsz", "H2-DMa", "H2-DMb1", "H2-Ab1", "H2-Aa", "H2-Eb1", "Cd74", "Ccr2", "Cstb", "Prdx1" ,"Gpx1", "Crip1", "Ftl1")
+macs_to_plot <- c("CD163+ Macs", "Ccr2+ Macs", "Iba1+ Macs")
+p <- DotPlot(seurat, features = c(genes_to_plot), 
+             idents = macs_to_plot, assay = "integrated", scale = TRUE, cols = c("lightgrey", "grey15")) + coord_flip()
+gene_colors <- c("Lyve1" = "goldenrod", "Folr2" = "goldenrod", "Vcam1" = "goldenrod", "F13a1" = "goldenrod", "Selenop" = "goldenrod", "Pf4" = "goldenrod", "Mrc1" = "goldenrod", "Cd163" = "goldenrod",
+                 "Ctsz" = "hotpink2", "H2-DMa" = "hotpink2", "H2-DMb1" = "hotpink2", "H2-Ab1" = "hotpink2", "H2-Aa" = "hotpink2", "H2-Eb1" = "hotpink2", "Cd74" = "hotpink2", "Ccr2" = "hotpink2", "Vcam1" = "hotpink2",
+                 "Cstb" = "mediumpurple3", "Prdx1" = "mediumpurple3","Gpx1" = "mediumpurple3", "Crip1" = "mediumpurple3", "Ftl1" = "mediumpurple3")
+mac_colors <- c("CD163+ Macs" = "goldenrod", "Ccr2+ Macs" = "hotpink2", "Iba1+ Macs" = "mediumpurple3")
+p + theme(axis.text.y = element_text(face = "bold", colour = sapply(genes_to_plot, function(x) gene_colors[x])),
+          axis.text.x = element_text(face = "bold", angle = 30, hjust = 1, size = 14, colour = sapply(macs_to_plot, function(x) mac_colors[x])),
+          axis.title.x = element_blank(),
+          axis.title.y = element_text(face = "bold"))
+
+# macrophage marker genes
+CD163.macs.conserved <- FindMarkers(seurat, ident.1 = "CD163+ Macs") %>% rownames_to_column("genes")
+Ccr2.macs.conserved <- FindMarkers(seurat, ident.1 = "Ccr2+ Macs") %>% rownames_to_column("genes")
+Iba1.macs.conserved <- FindMarkers(seurat, ident.1 = "Iba1+ Macs") %>% rownames_to_column("genes")
+
+# GO analysis macrophages
+CD163.macs.GO <- clusterProfiler::enrichGO(gene = CD163.macs.conserved[CD163.macs.conserved$avg_log2FC > 1 & CD163.macs.conserved$p_val_adj < 0.05,]$genes, OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "BP") %>% as.data.frame()
+Ccr2.macs.GO <- clusterProfiler::enrichGO(gene = Ccr2.macs.conserved[Ccr2.macs.conserved$avg_log2FC > 1 & Ccr2.macs.conserved$p_val_adj < 0.05,]$genes, OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "BP") %>% as.data.frame()
+Iba1.macs.GO <- clusterProfiler::enrichGO(gene = Iba1.macs.conserved[Iba1.macs.conserved$avg_log2FC > 1 & Iba1.macs.conserved$p_val_adj < 0.05,]$genes, OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "BP") %>% as.data.frame()
+
+
+                                                              #-------# NICHE-NET #-------#
+
+
+library(nichenetr)
+library(circlize)
+
+# preparation - load L-R interaction network
+for (i in 1:1){
+  organism <- "mouse"
+  if(organism == "human"){
+    lr_network <- readRDS(url("https://zenodo.org/record/7074291/files/lr_network_human_21122021.rds"))
+    ligand_target_matrix <- readRDS(url("https://zenodo.org/record/7074291/files/ligand_target_matrix_nsga2r_final.rds"))
+    weighted_networks <- readRDS(url("https://zenodo.org/record/7074291/files/weighted_networks_nsga2r_final.rds"))
+  } else if(organism == "mouse"){
+    lr_network <- readRDS(url("https://zenodo.org/record/7074291/files/lr_network_mouse_21122021.rds"))
+    ligand_target_matrix <- readRDS(url("https://zenodo.org/record/7074291/files/ligand_target_matrix_nsga2r_final_mouse.rds"))
+    weighted_networks <- readRDS(url("https://zenodo.org/record/7074291/files/weighted_networks_nsga2r_final_mouse.rds"))
+    
+  }
+  lr_network <- lr_network %>% distinct(from, to)
+  head(lr_network)
+  ligand_target_matrix[1:5,1:5] # target genes in rows, ligands in columns
+  head(weighted_networks$lr_sig) # interactions and their weights in the ligand-receptor + signaling network
+  head(weighted_networks$gr) # interactions and their weights in the gene regulatory network
+}
+
+# 1 --- # define receiver/sender populations and set of potential ligands
+seurat_3KL_only <- subset(seurat, subset = condition == "3KL")
+receiver = "CD4+ T-cells" # change this to the receiver of liking
+
+if(receiver == "CD4+ T-cells"){
+  receiver_colour <- "steelblue4"
+} 
+if(receiver == "CD8+ T-cells"){
+  receiver_colour <- "lightcyan4"
+}
+if(receiver == "CD4+CD8+ T-cells")
+  if(!receiver_colour %in% c("CD4+ T-cells", "CD8+ T-cells", "CD4+CD8+ T-cells")){
+    receiver_colour <- "darkorange"
+  }
+
+
+expressed_genes_receiver <- get_expressed_genes(receiver, seurat, pct = 0.10)
+
+all_receptors <- unique(lr_network$to) # get a list of all the receptors from the L-R network
+expressed_receptors <- intersect(all_receptors, expressed_genes_receiver) # define expressed receptors as genes in the LR network AND expressed in the receiver
+potential_ligands <- lr_network %>% filter(to %in% expressed_receptors) %>% pull(from) %>% unique() # define potential ligands as all ligands whose receptors as expressed
+
+sender_celltypes <- c("CD163+ Macs", "Ccr2+ Macs", "Iba1+ Macs") # define senders
+
+list_expressed_genes_sender <- sender_celltypes %>% unique() %>% lapply(get_expressed_genes, seurat_3KL_only, 0.10) # fetch genes of senders
+expressed_genes_sender <- list_expressed_genes_sender %>% unlist() %>% unique() # Use lapply to get the expressed genes of every sender cell type separately here
+potential_ligands_focused <- intersect(potential_ligands, expressed_genes_sender) # select expressed ligands that belong to the potential ligands list
+
+print(c(length(expressed_genes_sender), length(potential_ligands), length(potential_ligands_focused)))
+
+
+# 2 --- # Define the gene set of interest
+seurat_obj_receiver <- subset(seurat_3KL_only, idents = receiver) # creating a new seurat object with only the receiver population
+DE_table_receiver <-  FindMarkers(object = subset(seurat, idents = "CD4+ T-cells"),
+                                  ident.1 = "3KL", ident.2 = "WT",
+                                  group.by = "condition",
+                                  min.pct = 0.05) %>% rownames_to_column("gene") # calculating DEGs across conditions for the receiver population
+geneset_oi <- DE_table_receiver %>% filter(p_val_adj <= 0.05 & abs(avg_log2FC) >= 0.25) %>% pull(gene) # fetch gene names only
+
+
+
+# 3 --- # All the genes in the receiver population that are also in the LR matrix are defined as background genes
+background_expressed_genes <- expressed_genes_receiver %>% .[. %in% rownames(ligand_target_matrix)] 
+
+
+# 4 --- # predict ligand activities
+ligand_activities <- predict_ligand_activities(geneset = geneset_oi,
+                                               background_expressed_genes = background_expressed_genes,
+                                               ligand_target_matrix = ligand_target_matrix,
+                                               potential_ligands = potential_ligands_focused)
+
+ligand_activities <- ligand_activities %>% arrange(-aupr_corrected) %>% mutate(rank = rank(desc(aupr_corrected)))
+
+# determine how many ligands to include
+p_hist_lig_activity <- ggplot(ligand_activities, aes(x=aupr_corrected)) + 
+  geom_histogram(color="black", fill= receiver_colour)  + 
+  geom_vline(aes(xintercept=min(ligand_activities %>% top_n(10, aupr_corrected) %>% pull(aupr_corrected))),
+             color="red", linetype="dashed", linewidth=1) + 
+  labs(x="ligand activity (PCC)", y = "# ligands") +
+  theme_classic()
+p_hist_lig_activity
+
+best_upstream_ligands <- ligand_activities %>% top_n(10, aupr_corrected) %>% arrange(-aupr_corrected) %>% pull(test_ligand) # set the top10n ligands
+
+
+# 5 --- # Visualise the ligand activity measure (AUPR) of the top-ranked ligands
+ligand_aupr_matrix <- ligand_activities %>% filter(test_ligand %in% best_upstream_ligands) %>%
+  column_to_rownames("test_ligand") %>% select(aupr_corrected) %>% arrange(aupr_corrected)
+vis_ligand_aupr <- as.matrix(ligand_aupr_matrix, ncol = 1) 
+p_ligand_aupr <- make_heatmap_ggplot(vis_ligand_aupr,
+                                     "Prioritized ligands", "Activity", legend_title = "APRU", color = receiver_colour, legend_position = "right") + 
+  theme(axis.text.x.top = element_blank()) +
+  ggtitle(label = receiver) +
+  theme(
+    axis.title.x = element_text(size = 15, face = "bold"),   # Change the size for the x-axis title
+    axis.title.y = element_text(size = 15, face = "bold"),   # Change the size for the y-axis title
+    axis.text.x = element_text(size = 14),     # Change the size for the x-axis text
+    axis.text.y = element_text(size = 16, face = "bold", colour = ), # Change the size for the y-axis text
+    legend.title = element_text(size = 14, margin = margin(b = 5), face = "bold"),     # Change the size for the legend title
+    legend.text = element_text(size = 13),        # Change the size for the legend text
+    plot.title = element_text(face = "bold", colour = receiver_colour, size = 22, hjust = 0.5)
+  )
+pdf(file ="./new_aupr.pdf", height = 6, width = 3)
+print(p_ligand_aupr)
+dev.off()
+
+# 6 --- # Target Gene Plot -- heatmap of ligand activities
+active_ligand_target_links_df <- best_upstream_ligands %>% 
+  lapply(get_weighted_ligand_target_links,
+         geneset = geneset_oi,
+         ligand_target_matrix = ligand_target_matrix,
+         n = 100) %>%
+  bind_rows() %>% drop_na()
+
+active_ligand_target_links <- prepare_ligand_target_visualization(
+  ligand_target_df = active_ligand_target_links_df,
+  ligand_target_matrix = ligand_target_matrix,
+  cutoff = 0.33) 
+
+order_ligands <- best_upstream_ligands %>% rev()
+order_targets <- active_ligand_target_links_df$target %>% unique() %>% intersect(rownames(active_ligand_target_links))
+
+vis_ligand_target <- t(active_ligand_target_links[order_targets,order_ligands])
+vis_ligand_target <- as.data.frame(vis_ligand_target)
+vis_ligand_target["sum",] <- colSums(vis_ligand_target)
+
+vector <- vis_ligand_target["sum", ]
+threshold <- quantile(as.numeric(vector), probs = 0.35)
+top_90_columns <- vector >= threshold
+vis_ligand_target <- vis_ligand_target[, top_90_columns]
+vis_ligand_target <- vis_ligand_target[rownames(vis_ligand_target) != "sum", ]
+vis_ligand_target <- as.matrix(vis_ligand_target)
+
+p_ligand_target <- make_heatmap_ggplot(vis_ligand_target, "Prioritized ligands", "Predicted target genes",
+                                       color = receiver_colour, legend_title = "Regulatory potential") +
+  scale_fill_gradient2(low = "whitesmoke",  high = receiver_colour)
+pdf(file ="./new_heatmap.pdf", height = 4, width = 7)
+print(p_ligand_target)
+dev.off()
+
+# 7 --- # Circus plot
+dotplot <- DotPlot(seurat, assay = "SCT", idents = c("CD163+ Macs", "Ccr2+ Macs", "Iba1+ Macs"), features = best_upstream_ligands)
+dotplot<- dotplot$data
+df <- data.frame(CD163 = NA, Ccr2 = NA, Iba1 = NA)
+for(i in best_upstream_ligands){
+  df <- rbind(df, data.frame(CD163 = dotplot[dotplot$features.plot == i,]$avg.exp[1],
+                             Ccr2 = dotplot[dotplot$features.plot == i,]$avg.exp[2],
+                             Iba1 = dotplot[dotplot$features.plot == i,]$avg.exp[3]))
+}
+df <- na.omit(df)
+rownames(df) <- best_upstream_ligands
+df$Highest_Expression <- apply(df, 1, function(x) names(df)[which.max(x)])
+
+ligand_type_indication_df <- data.frame(ligand_type = df$Highest_Expression, ligand = row.names(df))
+
+active_ligand_target_links_df <- best_upstream_ligands %>%
+  lapply(get_weighted_ligand_target_links,
+         geneset = geneset_oi,
+         ligand_target_matrix = ligand_target_matrix,
+         n = 250) %>% bind_rows()
+
+active_ligand_target_links_df <- active_ligand_target_links_df %>%
+  mutate(target_type = receiver)
+
+ligand_colors <- c("CD163" = "goldenrod2",
+                   "Ccr2" = "hotpink2",
+                   "Iba1" = "mediumpurple3")
+target_colors <- c("CD8+ T-cells" = "lightcyan4", "CD4+ T-cells" = "steelblue4")
+
+
+circos_links_top <- data.frame()
+cutoff <- 0.95
+for(i in unique(df$Highest_Expression)){
+  circos_links <- get_ligand_target_links_oi(ligand_type_indication_df[ligand_type_indication_df$ligand_type == i,],
+                                             active_ligand_target_links_df,
+                                             cutoff = cutoff) 
+  circos_links_top <- rbind(circos_links_top, circos_links)
+}
+
+
+vis_circos_obj <- prepare_circos_visualization(circos_links_top,
+                                               ligand_colors = ligand_colors,
+                                               target_colors = target_colors,
+                                               celltype_order = NULL) 
+
+make_circos_plot_new<- function (vis_circos_obj, transparency = TRUE, args.circos.text = list(), 
+                                 ...) {
+  if (!is.logical(transparency)) 
+    stop("transparency should be a logical")
+  if (!all(c("links_circle", "ligand_colors", "order", "gaps") %in% 
+           names(vis_circos_obj))) 
+    stop("vis_circos_obj should contain the elements 'links_circle', 'ligand_colors', 'order' and 'gaps'")
+  if (!all(names(args.circos.text) %in% names(formals(circos.text)))) {
+    warning("args.circos.text contain element(s) that are not part of the arguments of circos.text")
+  }
+  if (!all(names(list(...)) %in% names(formals(chordDiagram)))) {
+    warning("extra arguments contain element(s) that are not part of the arguments of chordDiagram")
+  }
+  if (!transparency) {
+    transparency_val <- 0
+  }
+  else if (transparency) {
+    transparency_val <- vis_circos_obj$links_circle %>% 
+      mutate(weight = (weight - min(weight))/(max(weight) - 
+                                                min(weight))) %>% mutate(transparency = 1 - 
+                                                                           weight) %>% .$transparency
+  }
+  default_params <- list(x = vis_circos_obj$links_circle, 
+                         order = vis_circos_obj$order, grid.col = vis_circos_obj$ligand_colors, 
+                         transparency = transparency_val, directional = 1, link.sort = TRUE, 
+                         link.decreasing = FALSE, diffHeight = 0.005, direction.type = c("diffHeight", 
+                                                                                         "arrows"), link.arr.type = "big.arrow", link.visible = TRUE, 
+                         annotationTrack = "grid", preAllocateTracks = list(track.height = 0.075))
+  default_params[names(list(...))] = list(...)
+  circos_text_default_params <- list(facing = "clockwise", 
+                                     niceFacing = TRUE, adj = c(0, 0.55), cex = 1.2)
+  circos_text_default_params[names(args.circos.text)] <- args.circos.text
+  circos.par(gap.degree = vis_circos_obj$gaps)
+  do.call(chordDiagram, default_params)
+  circos.track(track.index = 1, panel.fun = function(x, y) {
+    do.call(circos.text, c(list(x = CELL_META$xcenter, y = CELL_META$ylim[1], 
+                                label = CELL_META$sector.index), circos_text_default_params))
+  }, bg.border = NA)
+  circos.clear()
+}
+
+
+make_circos_plot_new(vis_circos_obj, transparency = FALSE,  args.circos.text = list(cex = 1.7))
+
+
+# Ligand - Receptor interaction plot (vs a Ligand-Target)
+lr_network_top_df <- get_weighted_ligand_receptor_links(best_upstream_ligands,
+                                                        expressed_receptors,
+                                                        lr_network,
+                                                        weighted_networks$lr_sig) %>%
+  rename(ligand=from, target=to) %>% 
+  mutate(target_type = receiver) %>% 
+  inner_join(ligand_type_indication_df)
+
+vis_circos_receptor_obj <- prepare_circos_visualization(lr_network_top_df,
+                                                        ligand_colors = ligand_colors,
+                                                        target_colors = target_colors) 
+pdf(file = "./new_circus_plot.pdf", height = 7.5, width = 8)
+make_circos_plot(vis_circos_receptor_obj, transparency = TRUE,
+                 link.visible = TRUE,  args.circos.text = list(cex = 1.2)) 
+dev.off()
+
+
+
